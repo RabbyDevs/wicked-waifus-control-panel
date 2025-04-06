@@ -107,8 +107,6 @@ fn start_servers(project_path: &str, marker_file: &str) {
     }
 
     let status = Command::new("wt")
-        .arg("-p")
-        .arg("wicked-waifus")
         .args(wt_command_string.split_whitespace())
         .status()
         .unwrap_or_else(|err| {
