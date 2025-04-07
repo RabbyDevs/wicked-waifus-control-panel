@@ -37,6 +37,7 @@ fn main() {
     let marker_file = env::var("TEMP").unwrap_or_else(|_| String::from(".")) + "\\ww-server-terminals.txt";
 
     loop {
+        print!("\x1B[2J\x1B[1;1H");
         println!("===================================================");
         println!("       WICKED WAIFUS SERVERS CONTROL PANEL");
         println!("===================================================");
