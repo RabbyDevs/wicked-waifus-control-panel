@@ -130,35 +130,6 @@ fn stop_servers(marker_file: &str) {
         return;
     }
 
-    let servers = [
-        "wicked-waifus-config-server",
-        "wicked-waifus-hotpatch-server",
-        "wicked-waifus-login-server",
-        "wicked-waifus-gateway-server",
-        "wicked-waifus-game-server",
-    ];
-
-    for server in servers {
-        match Command::new("taskkill")
-            .args(["/f", "/im", &format!("{}.exe", server)])
-            .output() {
-                Ok(output) => {
-                    if !output.status.success() {
-                        eprintln!(
-                            "Warning: Failed to kill process '{}'. Output: {:?}",
-                            server,
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                    } else {
-                        println!("Successfully stopped {}", server);
-                    }
-                },
-                Err(err) => {
-                    eprintln!("Warning: Failed to execute taskkill for '{}': {}", server, err);
-                }
-            };
-    }
-
     match Command::new("taskkill")
         .args(["/F", "/IM", "WindowsTerminal.exe"])
         .output() {
