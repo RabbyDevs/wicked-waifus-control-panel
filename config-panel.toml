@@ -1,1 +1,2 @@
 project_path = "E:\\Users\\moham\\wicked-waifus-rs" # example, please set your own when using this
+release = false # faster server if you set this to true, default is false if this doesnt exist in the config-panel.toml

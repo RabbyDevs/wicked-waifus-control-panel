@@ -9,25 +9,29 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct Config {
     project_path: String,
+    release: Option<bool>
 }
 
-fn main() {
+fn get_config() -> Config {
     let config_path = "config-panel.toml";
     if !PathBuf::from(config_path).exists() {
         eprintln!("Error: config-panel.toml not found. Please create it and define 'project_path'.");
-        return;
+        std::process::exit(1);
     }
 
     let config_content = fs::read_to_string(config_path).unwrap_or_else(|_| {
         eprintln!("Error: Failed to read config-panel.toml.");
-        String::new()
-    });
-
-    let config: Config = toml::from_str(&config_content).unwrap_or_else(|_| {
-        eprintln!("Error: Failed to parse config-panel.toml. Ensure it contains 'project_path'.");
         std::process::exit(1);
     });
 
+    toml::from_str(&config_content).unwrap_or_else(|_| {
+        eprintln!("Error: Failed to parse config-panel.toml. Please put actual toml in it.");
+        std::process::exit(1);
+    })
+}
+
+fn main() {
+    let config = get_config();
     let project_path = config.project_path;
 
     let marker_file = env::var("TEMP").unwrap_or_else(|_| String::from(".")) + "\\ww-server-terminals.txt";
@@ -71,6 +75,8 @@ fn get_user_input(prompt: &str) -> String {
 }
 
 fn start_servers(project_path: &str, marker_file: &str) {
+    let config = get_config();
+    let release = config.release.unwrap_or(false);
     if PathBuf::from(marker_file).exists() {
         println!("Servers appear to be already running.");
         println!("Stop them first or restart them.");
@@ -80,7 +86,6 @@ fn start_servers(project_path: &str, marker_file: &str) {
 
     let servers = [
         "wicked-waifus-config-server",
-        "wicked-waifus-hotpatch-server",
         "wicked-waifus-login-server",
         "wicked-waifus-gateway-server",
         "wicked-waifus-game-server",
@@ -89,8 +94,8 @@ fn start_servers(project_path: &str, marker_file: &str) {
     let mut wt_command_string = String::new();
     for (i, server) in servers.iter().enumerate() {
         let cmd = format!(
-            "cd /d {} && cargo run --bin {} && exit",
-            project_path, server
+            "cd /d {} && cargo run {} --bin {} && exit",
+            project_path, if release {"--release"} else {""}, server
         );
 
         if i == 0 {
