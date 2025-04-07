@@ -139,39 +139,43 @@ fn stop_servers(marker_file: &str) {
     ];
 
     for server in servers {
-        let output = Command::new("taskkill")
+        match Command::new("taskkill")
             .args(["/f", "/im", &format!("{}.exe", server)])
-            .output()
-            .unwrap_or_else(|_| {
-                eprintln!("Error: Failed to kill process '{}'", server);
-                std::process::exit(1);
-            });
-
-        if !output.status.success() {
-            eprintln!(
-                "Error: Failed to kill process '{}'. Output: {:?}",
-                server,
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+            .output() {
+                Ok(output) => {
+                    if !output.status.success() {
+                        eprintln!(
+                            "Warning: Failed to kill process '{}'. Output: {:?}",
+                            server,
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    } else {
+                        println!("Successfully stopped {}", server);
+                    }
+                },
+                Err(err) => {
+                    eprintln!("Warning: Failed to execute taskkill for '{}': {}", server, err);
+                }
+            };
     }
 
-    let output = Command::new("taskkill")
+    match Command::new("taskkill")
         .args(["/F", "/IM", "WindowsTerminal.exe"])
-        .output()
-        .unwrap_or_else(|_| {
-            eprintln!("Error: Failed to close Windows Terminal.");
-            std::process::exit(1);
-        });
-
-    if !output.status.success() {
-        eprintln!(
-            "Error: Failed to close Windows Terminal. Output: {:?}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    } else {
-        println!("Closed Windows Terminal.");
-    }
+        .output() {
+            Ok(output) => {
+                if !output.status.success() {
+                    eprintln!(
+                        "Warning: Failed to close Windows Terminal. Output: {:?}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                } else {
+                    println!("Successfully stopped Terminal");
+                }
+            },
+            Err(_) => {
+                eprintln!("Error: Failed to close Windows Terminal.")
+            }
+        };
 
     fs::remove_file(marker_file).unwrap_or_else(|_| {
         eprintln!("Error: Failed to remove marker file.");
@@ -208,9 +212,31 @@ fn start_servers_and_launch_launcher(project_path: &str, marker_file: &str) {
 
     let path = PathBuf::new();
     let launcher_path = env::current_exe().unwrap_or_else(|_| PathBuf::new()).parent().unwrap_or(path.as_path()).join("launcher.exe");
+    
     if launcher_path.exists() {
-        Command::new(launcher_path).spawn().ok();
-        println!("launcher.exe started successfully.");
+        // Launch launcher.exe with administrator elevation using powershell
+        println!("Launching launcher.exe with administrator privileges...");
+        
+        // Create a PowerShell command to start launcher.exe with elevation
+        let powershell_command = format!(
+            "Start-Process -FilePath \"{}\" -Verb RunAs",
+            launcher_path.to_string_lossy()
+        );
+        
+        let status = Command::new("powershell")
+            .args(["-Command", &powershell_command])
+            .status()
+            .unwrap_or_else(|err| {
+                eprintln!("Error: Failed to launch launcher with elevation: {}", err);
+                std::process::exit(1);
+            });
+            
+        if status.success() {
+            println!("launcher.exe started successfully with administrator privileges.");
+        } else {
+            println!("Failed to start launcher.exe with administrator privileges.");
+            println!("This might happen if you declined the UAC prompt.");
+        }
     } else {
         println!("launcher.exe not found. Skipping this step.");
     }
