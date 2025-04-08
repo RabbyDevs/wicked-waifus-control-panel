@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 use std::env;
@@ -13,7 +13,7 @@ struct Config {
 }
 
 struct ServerState {
-    running: bool,
+    running: bool
 }
 
 fn get_config() -> Config {
@@ -34,13 +34,66 @@ fn get_config() -> Config {
     })
 }
 
+fn update_terminal_settings() -> Result<(), Box<dyn std::error::Error>> {
+    let settings_path = dirs::home_dir()
+        .ok_or("Could not determine home directory")?
+        .join("AppData")
+        .join("Local")
+        .join("Packages")
+        .join("Microsoft.WindowsTerminal_8wekyb3d8bbwe")
+        .join("LocalState")
+        .join("settings.json");
+
+    if !settings_path.exists() {
+        let settings_path = dirs::home_dir()
+            .ok_or("Could not determine home directory")?
+            .join("AppData")
+            .join("Local")
+            .join("Packages")
+            .join("Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe")
+            .join("LocalState")
+            .join("settings.json");
+            
+        if !settings_path.exists() {
+            return Err("Windows Terminal settings.json not found".into());
+        }
+    }
+    
+    println!("Updating Windows Terminal settings to close tabs when processes exit...");
+    
+    let settings_content = fs::read_to_string(&settings_path)?;
+    let mut settings: serde_json::Value = serde_json::from_str(&settings_content)?;
+    
+    if let Some(profiles) = settings.get_mut("profiles") {
+        if let Some(defaults) = profiles.get_mut("defaults") {
+            defaults["closeOnExit"] = serde_json::json!("always");
+        } else {
+            profiles["defaults"] = serde_json::json!({
+                "closeOnExit": "always"
+            });
+        }
+    }
+    
+    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+    
+    println!("Windows Terminal settings updated successfully.");
+    
+    Ok(())
+}
+
+
 fn main() {
     let config = get_config();
     let project_path = config.project_path;
     
     let mut server_state = ServerState {
-        running: false,
+        running: false
     };
+
+    if let Err(e) = update_terminal_settings() {
+        println!("Failed to update Windows Terminal settings: {}", e);
+        println!("Terminal tabs may not close automatically when servers stop.");
+    }
 
     loop {
         // print!("\x1B[2J\x1B[1;1H");
@@ -81,7 +134,6 @@ fn get_user_input(prompt: &str) -> String {
     input.trim().to_string()
 }
 
-// Generate a unique window title prefix for our server terminals
 fn get_window_title_prefix() -> String {
     "WW_".to_string()
 }
@@ -105,7 +157,9 @@ fn start_servers(project_path: &str, server_state: &mut ServerState) {
     ];
 
     let window_prefix = get_window_title_prefix();
-    let mut wt_command_string = String::new();
+    
+    let mut wt_args = Vec::new();
+    
     for (i, server) in servers.iter().enumerate() {
         let window_title = format!("{}{}", window_prefix, server);
         let cmd = format!(
@@ -114,27 +168,27 @@ fn start_servers(project_path: &str, server_state: &mut ServerState) {
         );
 
         if i == 0 {
-            wt_command_string.push_str(&format!(
-                "--title \"{}\" cmd /c \"{}\"",
-                window_title, cmd
-            ));
+            wt_args.push("--title".to_string());
+            wt_args.push(window_title);
+            wt_args.push("cmd".to_string());
+            wt_args.push("/c".to_string());
+            wt_args.push(cmd);
         } else {
-            wt_command_string.push_str(&format!(
-                " ; new-tab --title \"{}\" cmd /c \"{}\"",
-                window_title, cmd
-            ));
+            wt_args.push(";".to_string());
+            wt_args.push("new-tab".to_string());
+            wt_args.push("--title".to_string());
+            wt_args.push(window_title);
+            wt_args.push("cmd".to_string());
+            wt_args.push("/c".to_string());
+            wt_args.push(cmd);
         }
     }
 
-    // Start Windows Terminal with unique window titles
     match Command::new("wt")
-        .args(wt_command_string.split_whitespace())
+        .args(&wt_args)
         .spawn() {
             Ok(_) => {
                 server_state.running = true;
-                println!("All servers started successfully.");
-                // Give the servers time to start up
-                thread::sleep(Duration::from_secs(2));
             }
             Err(err) => {
                 eprintln!("Error: Failed to launch Windows Terminal: {}", err);
@@ -144,84 +198,26 @@ fn start_servers(project_path: &str, server_state: &mut ServerState) {
 
 fn stop_servers(server_state: &mut ServerState) {
     if !server_state.running {
-        println!("No server terminals are running.");
+        println!("Servers don't appear to be running.");
         return;
     }
-
-    let window_prefix = get_window_title_prefix();
     
-    let ps_command = format!(
-        "Get-Process | Where-Object {{$_.MainWindowTitle -like '*{}*'}} | ForEach-Object {{$_.Id}}",
-        window_prefix
-    );
-
-    let output = Command::new("powershell")
-        .args(["-Command", &ps_command])
-        .output();
-
-    match output {
-        Ok(output) => {
-            if !output.status.success() {
-                eprintln!("Error finding server processes. Assuming they're not running.");
-                server_state.running = false;
-                return;
-            }
-
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let pids: Vec<&str> = stdout.split_whitespace().collect();
-            
-            if pids.is_empty() {
-                println!("No server processes found. They may have been closed already.");
-                server_state.running = false;
-                return;
-            }
-
-            let mut all_killed = true;
-            for pid in pids {
-                if pid.trim().is_empty() {
-                    continue;
-                }
-                
-                println!("Stopping server with PID: {}", pid);
-                
-                match Command::new("taskkill")
-                    .args(["/F", "/PID", pid])
-                    .output() {
-                        Ok(kill_output) => {
-                            if !kill_output.status.success() {
-                                eprintln!(
-                                    "Warning: Failed to kill process {}. Output: {:?}",
-                                    pid,
-                                    String::from_utf8_lossy(&kill_output.stderr)
-                                );
-                                all_killed = false;
-                            }
-                        },
-                        Err(e) => {
-                            eprintln!("Error killing process {}: {}", pid, e);
-                            all_killed = false;
-                        }
-                    }
-            }
-
-            if all_killed {
-                println!("All server processes stopped successfully.");
-                server_state.running = false;
-            } else {
-                println!("Some server processes could not be stopped.");
-                server_state.running = false;
-            }
-        },
-        Err(e) => {
-            eprintln!("Error running PowerShell command: {}", e);
-            println!("Unable to find server processes.");
-            server_state.running = false;
-        }
-    }
+    let kill_cargo = "Get-Process -Name cargo | ForEach-Object { $id = $_.Id; $cmdLine = (Get-CimInstance Win32_Process -Filter \"ProcessId = $id\").CommandLine; if ($cmdLine -like '*wicked-waifus*') { taskkill /F /PID $id } }".to_string();
+    
+    Command::new("powershell")
+        .args(["-Command", &kill_cargo])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| child.wait())
+        .ok();
+    
+    server_state.running = false;
 }
 
 fn restart_servers(project_path: &str, server_state: &mut ServerState) {
     stop_servers(server_state);
+    thread::sleep(Duration::from_secs(2));
     start_servers(project_path, server_state);
 }
 
